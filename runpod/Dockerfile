@@ -114,20 +114,25 @@ ENV PYTHONPATH="/workspace/TRELLIS:/opt/utils3d:${PYTHONPATH}"
 
 RUN pip install --no-cache-dir fastapi "uvicorn[standard]"
 
-# Pré-descarrega os pesos do TRELLIS-image-large para dentro da imagem, para
-# não pagar esse download a cada sessão de lote. Não chama .cuda() aqui —
-# só carrega para CPU, não precisa de GPU física no build.
+# Pré-descarrega os FICHEIROS do TRELLIS-image-large (pesos + configs) para
+# dentro da imagem, para não pagar esse download a cada sessão de lote.
 #
-# HF_TOKEN autentica os pedidos ao Hugging Face Hub — sem ele, pedidos
-# anónimos batem no rate limit a meio do download dos ~18 ficheiros de
-# checkpoint (confirmado no build real: "Repository Not Found" a meio,
-# que era na verdade um 401 de rate-limit mascarado por um except genérico
-# no código do TRELLIS). Passado como build secret (--mount=type=secret),
-# nunca fica gravado em nenhuma camada da imagem.
+# Importante: NÃO instanciamos o pipeline aqui (TrellisImageTo3DPipeline.
+# from_pretrained(...)) — o decoder de malha (slat_decoder_mesh) precisa de
+# GPU física só para CONSTRUIR o modelo (não só para inferência), e falha
+# com "RuntimeError: Found no NVIDIA driver" no build (confirmado no build
+# real — esse erro ficava mascarado por um except genérico no código do
+# TRELLIS, que tentava um caminho alternativo e falhava por outro motivo,
+# escondendo a causa raiz). Por isso usamos snapshot_download, que só
+# copia os ficheiros para a cache local — a construção real do modelo (que
+# precisa de GPU) só acontece dentro do pod, em runpod/pod_server.py.
+#
+# HF_TOKEN autentica os pedidos (rate limit mais alto), passado como build
+# secret (--mount=type=secret) para nunca ficar gravado em nenhuma camada.
 RUN --mount=type=secret,id=HF_TOKEN \
     export HF_TOKEN="$(cat /run/secrets/HF_TOKEN 2>/dev/null || true)" && \
-    python -c "from trellis.pipelines import TrellisImageTo3DPipeline; \
-    TrellisImageTo3DPipeline.from_pretrained('microsoft/TRELLIS-image-large')"
+    python -c "from huggingface_hub import snapshot_download; \
+    snapshot_download('microsoft/TRELLIS-image-large')"
 
 COPY runpod/pod_server.py /workspace/pod_server.py
 WORKDIR /workspace
