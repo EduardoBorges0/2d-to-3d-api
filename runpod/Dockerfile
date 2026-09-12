@@ -63,9 +63,13 @@ RUN pip install --no-cache-dir torch==2.4.0 torchvision==0.19.0 \
 RUN pip install --no-cache-dir \
         pillow imageio imageio-ffmpeg tqdm easydict opencv-python-headless \
         scipy ninja rembg onnxruntime trimesh open3d xatlas pyvista \
-        pymeshfix igraph transformers plyfile
-RUN pip install --no-cache-dir \
-    "git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8"
+        pymeshfix igraph transformers plyfile moderngl
+# utils3d: instalar via pip (git+https) produz um wheel "UNKNOWN" praticamente
+# vazio neste commit (bug de empacotamento do pyproject.toml deles, confirmado
+# no build real) — clona-se e põe-se no PYTHONPATH diretamente em vez de
+# depender do build de wheel do pip.
+RUN git clone https://github.com/EasternJournalist/utils3d.git /opt/utils3d \
+    && cd /opt/utils3d && git checkout 9a4eb15e4021b67b12c460c7057d642626897ec8
 
 # 3) "--xformers" (versão fixada pelo setup.sh oficial para torch 2.4.0 + cu121)
 RUN pip install --no-cache-dir xformers==0.0.27.post2 \
@@ -103,7 +107,7 @@ RUN pip install --no-cache-dir spconv-cu120
 # já cobrem tudo o que ele instalaria para "--basic --xformers --flash-attn
 # --diffoctreerast --spconv --mipgaussian --kaolin --nvdiffrast")
 RUN git clone --recurse-submodules https://github.com/microsoft/TRELLIS.git /workspace/TRELLIS
-ENV PYTHONPATH="/workspace/TRELLIS:${PYTHONPATH}"
+ENV PYTHONPATH="/workspace/TRELLIS:/opt/utils3d:${PYTHONPATH}"
 
 RUN pip install --no-cache-dir fastapi "uvicorn[standard]"
 
