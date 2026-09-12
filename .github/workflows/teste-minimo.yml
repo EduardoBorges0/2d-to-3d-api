@@ -1,8 +1,0 @@
-name: teste-minimo
-on:
-  workflow_dispatch: {}
-jobs:
-  ola:
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "ola mundo"
