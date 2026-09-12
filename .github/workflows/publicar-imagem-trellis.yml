@@ -1,11 +1,11 @@
-name: teste-completo
+name: Build + push imagem RunPod (TRELLIS)
 on:
   workflow_dispatch: {}
   push:
     branches: [dev, main]
     paths:
       - "runpod/**"
-      - ".github/workflows/teste-completo.yml"
+      - ".github/workflows/publicar-imagem-trellis.yml"
 jobs:
   build-and-push:
     runs-on: ubuntu-latest

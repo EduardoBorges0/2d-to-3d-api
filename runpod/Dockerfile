@@ -69,18 +69,20 @@ RUN pip install --no-cache-dir flash-attn \
 RUN pip install --no-cache-dir kaolin \
     -f https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.4.0_cu121.html
 
-# 6) "--nvdiffrast" — o backend CUDA compila em JIT no 1º uso dentro do pod
-# (já com GPU real), o `pip install` aqui só instala o pacote Python.
+# 6) "--nvdiffrast" — o setup.py precisa de ver o torch já instalado (senão
+# falha com "Cannot compile nvdiffrast CUDA extension"), por isso
+# --no-build-isolation (não deixar o pip criar um venv de build isolado).
 RUN git clone https://github.com/NVlabs/nvdiffrast.git /tmp/extensions/nvdiffrast \
-    && pip install --no-cache-dir /tmp/extensions/nvdiffrast
+    && pip install --no-cache-dir --no-build-isolation /tmp/extensions/nvdiffrast
 
-# 7) "--diffoctreerast" — compila kernels CUDA já no build (TORCH_CUDA_ARCH_LIST acima)
+# 7) "--diffoctreerast" — compila kernels CUDA já no build (TORCH_CUDA_ARCH_LIST
+# acima); mesmo motivo do --no-build-isolation que o nvdiffrast.
 RUN git clone --recurse-submodules https://github.com/JeffreyXiang/diffoctreerast.git /tmp/extensions/diffoctreerast \
-    && pip install --no-cache-dir /tmp/extensions/diffoctreerast
+    && pip install --no-cache-dir --no-build-isolation /tmp/extensions/diffoctreerast
 
 # 8) "--mipgaussian" (mip-splatting / diff-gaussian-rasterization)
 RUN git clone https://github.com/autonomousvision/mip-splatting.git /tmp/extensions/mip-splatting \
-    && pip install --no-cache-dir /tmp/extensions/mip-splatting/submodules/diff-gaussian-rasterization/
+    && pip install --no-cache-dir --no-build-isolation /tmp/extensions/mip-splatting/submodules/diff-gaussian-rasterization/
 
 # 9) "--spconv" — wheel pré-compilada
 RUN pip install --no-cache-dir spconv-cu120
