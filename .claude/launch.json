@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "catalogo-3d",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["pipeline/server.py"],
+      "port": 8791
+    }
+  ]
+}

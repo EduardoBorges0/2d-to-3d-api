@@ -1,0 +1,27 @@
+# manual_pipeline.py (extração de manuais PDF)
+PyMuPDF
+pytesseract
+Pillow
+
+# server.py (backend do catálogo — upload de fotos, fila de processamento)
+fastapi
+uvicorn
+python-multipart
+pydantic
+
+# trellis_pipeline.py / runpod_pod_client.py — liga pods RunPod (Community
+# Cloud) por sessão de lote (ver runpod/README.md), não precisa de torch/cuda
+# localmente
+requests
+python-dotenv
+
+# edit_pipeline.py — edição paramétrica por texto (furo/saliência)
+anthropic
+trimesh
+manifold3d
+numpy
+
+# Nota: as dependências pesadas do TRELLIS (torch+cuda, xformers,
+# diffoctreerast, nvdiffrast, kaolin, ..., fastapi/uvicorn do runpod/pod_server.py)
+# já não são precisas neste .venv — só existem dentro da imagem Docker do pod
+# RunPod (ver runpod/Dockerfile).
