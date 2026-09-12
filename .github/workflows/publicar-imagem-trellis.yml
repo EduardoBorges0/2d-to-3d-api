@@ -37,3 +37,5 @@ jobs:
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/2d-to-3d-trellis:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          secrets: |
+            HF_TOKEN=${{ secrets.HF_TOKEN }}

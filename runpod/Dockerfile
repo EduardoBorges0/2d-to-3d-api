@@ -1,3 +1,6 @@
+# syntax=docker/dockerfile:1.7
+# (necessário para RUN --mount=type=secret, usado mais abaixo para o HF_TOKEN)
+#
 # Imagem do pod RunPod (Community Cloud) que corre o TRELLIS (microsoft/TRELLIS).
 #
 # Este NÃO é o padrão RunPod Serverless — não usa o SDK `runpod`. É um pod
@@ -114,7 +117,16 @@ RUN pip install --no-cache-dir fastapi "uvicorn[standard]"
 # Pré-descarrega os pesos do TRELLIS-image-large para dentro da imagem, para
 # não pagar esse download a cada sessão de lote. Não chama .cuda() aqui —
 # só carrega para CPU, não precisa de GPU física no build.
-RUN python -c "from trellis.pipelines import TrellisImageTo3DPipeline; \
+#
+# HF_TOKEN autentica os pedidos ao Hugging Face Hub — sem ele, pedidos
+# anónimos batem no rate limit a meio do download dos ~18 ficheiros de
+# checkpoint (confirmado no build real: "Repository Not Found" a meio,
+# que era na verdade um 401 de rate-limit mascarado por um except genérico
+# no código do TRELLIS). Passado como build secret (--mount=type=secret),
+# nunca fica gravado em nenhuma camada da imagem.
+RUN --mount=type=secret,id=HF_TOKEN \
+    export HF_TOKEN="$(cat /run/secrets/HF_TOKEN 2>/dev/null || true)" && \
+    python -c "from trellis.pipelines import TrellisImageTo3DPipeline; \
     TrellisImageTo3DPipeline.from_pretrained('microsoft/TRELLIS-image-large')"
 
 COPY runpod/pod_server.py /workspace/pod_server.py
