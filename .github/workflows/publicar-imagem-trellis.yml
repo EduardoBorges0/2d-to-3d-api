@@ -33,3 +33,5 @@ jobs:
           file: runpod/Dockerfile
           push: true
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/2d-to-3d-trellis:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

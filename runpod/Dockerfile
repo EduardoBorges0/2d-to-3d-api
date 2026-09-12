@@ -57,11 +57,13 @@ WORKDIR /workspace
 RUN pip install --no-cache-dir torch==2.4.0 torchvision==0.19.0 \
     --index-url https://download.pytorch.org/whl/cu121
 
-# 2) Dependências "--basic" do TRELLIS
+# 2) Dependências "--basic" do TRELLIS (+ plyfile: o setup.sh oficial não a
+# lista, mas trellis/representations/gaussian precisa dela — confirmado no
+# build real: "ModuleNotFoundError: No module named 'plyfile'")
 RUN pip install --no-cache-dir \
         pillow imageio imageio-ffmpeg tqdm easydict opencv-python-headless \
         scipy ninja rembg onnxruntime trimesh open3d xatlas pyvista \
-        pymeshfix igraph transformers
+        pymeshfix igraph transformers plyfile
 RUN pip install --no-cache-dir \
     "git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8"
 
