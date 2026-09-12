@@ -1,0 +1,14 @@
+name: teste-trigger
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [dev, main]
+    paths:
+      - "runpod/**"
+      - ".github/workflows/teste-trigger.yml"
+
+jobs:
+  ola:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "ola"
