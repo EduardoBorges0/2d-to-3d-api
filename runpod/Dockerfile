@@ -37,7 +37,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3.10-dev \
         python3-pip \
         ninja-build \
+        libx11-6 \
+        libxext6 \
+        libxrender1 \
+        libsm6 \
+        libgl1 \
+        libglib2.0-0 \
+        libgomp1 \
     && rm -rf /var/lib/apt/lists/*
+    # libx11-6/libxext6/libxrender1/libsm6/libgl1/libglib2.0-0: o open3d importa
+    # estas libs de sistema (mesmo sem GUI) — falha com "libX11.so.6: cannot
+    # open shared object file" sem elas (confirmado no build real)
 
 RUN ln -sf /usr/bin/python3.10 /usr/bin/python
 
