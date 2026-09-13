@@ -8,13 +8,23 @@ pipeline/runpod_pod_client.py (PodSession) do lado de quem chama.
 
 Contrato dos endpoints (tem de ficar em sincronia com runpod_pod_client.py):
     GET  /health              -> 200 assim que o TRELLIS estiver carregado
-    POST /generate            -> {images_b64, quality, seed} -> {glb_b64}
+    POST /generate            -> {images_b64, quality, seed} -> {job_id}
+    GET  /generate/{job_id}   -> {status: pending|done|error, glb_b64?, error?}
+
+POST /generate devolve logo um job_id (não espera pela geração terminar) —
+uma única geração pode demorar mais que o timeout do proxy HTTP do RunPod
+(~100s, é o Cloudflare por trás do proxy.runpod.net; confirmado na prática
+com um 524 numa geração real). Ao devolver logo e o cliente ir perguntando
+pelo estado, nenhum pedido HTTP individual fica à espera tempo nenhum.
 """
 
 import base64
 import io
+import threading
+import uuid
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from PIL import Image
 
@@ -43,6 +53,12 @@ PIPELINE = TrellisImageTo3DPipeline.from_pretrained("microsoft/TRELLIS-image-lar
 PIPELINE.cuda()
 print("TRELLIS carregado, pod pronto para gerar.")
 
+# job_id -> {"status": "pending"|"done"|"error", "glb_b64": str|None, "error": str|None}
+# Sessão de lote é curta (o pod desliga-se no fim) — não vale a pena limpar
+# jobs antigos, a memória usada é desprezável (só strings de estado).
+_JOBS: dict[str, dict] = {}
+_JOBS_LOCK = threading.Lock()
+
 
 class GenerateRequest(BaseModel):
     images_b64: list[str]
@@ -55,32 +71,61 @@ def health():
     return {"ok": True}
 
 
+def _run_generation(job_id: str, body: GenerateRequest):
+    try:
+        preset = QUALITY_PRESETS[body.quality]
+        images = [Image.open(io.BytesIO(base64.b64decode(b))) for b in body.images_b64]
+
+        common_kwargs = dict(
+            seed=body.seed,
+            sparse_structure_sampler_params=preset["sparse_structure_sampler_params"],
+            slat_sampler_params=preset["slat_sampler_params"],
+        )
+
+        if len(images) == 1:
+            outputs = PIPELINE.run(images[0], **common_kwargs)
+        else:
+            outputs = PIPELINE.run_multi_image(images, **common_kwargs)
+
+        glb = postprocessing_utils.to_glb(
+            outputs["gaussian"][0],
+            outputs["mesh"][0],
+            simplify=preset["simplify"],
+            texture_size=preset["texture_size"],
+        )
+
+        buf = io.BytesIO()
+        glb.export(buf, file_type="glb")
+        glb_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        with _JOBS_LOCK:
+            _JOBS[job_id] = {"status": "done", "glb_b64": glb_b64, "error": None}
+    except Exception as e:
+        with _JOBS_LOCK:
+            _JOBS[job_id] = {"status": "error", "glb_b64": None, "error": f"{type(e).__name__}: {e}"}
+
+
 @app.post("/generate")
 def generate(body: GenerateRequest):
     if body.quality not in QUALITY_PRESETS:
-        return {"error": f"quality inválida: {body.quality!r} (esperado 'fast' ou 'quality')"}
+        return JSONResponse(
+            {"error": f"quality inválida: {body.quality!r} (esperado 'fast' ou 'quality')"},
+            status_code=400,
+        )
 
-    preset = QUALITY_PRESETS[body.quality]
-    images = [Image.open(io.BytesIO(base64.b64decode(b))) for b in body.images_b64]
+    job_id = uuid.uuid4().hex
+    with _JOBS_LOCK:
+        _JOBS[job_id] = {"status": "pending", "glb_b64": None, "error": None}
 
-    common_kwargs = dict(
-        seed=body.seed,
-        sparse_structure_sampler_params=preset["sparse_structure_sampler_params"],
-        slat_sampler_params=preset["slat_sampler_params"],
-    )
+    thread = threading.Thread(target=_run_generation, args=(job_id, body), daemon=True)
+    thread.start()
 
-    if len(images) == 1:
-        outputs = PIPELINE.run(images[0], **common_kwargs)
-    else:
-        outputs = PIPELINE.run_multi_image(images, **common_kwargs)
+    return {"job_id": job_id}
 
-    glb = postprocessing_utils.to_glb(
-        outputs["gaussian"][0],
-        outputs["mesh"][0],
-        simplify=preset["simplify"],
-        texture_size=preset["texture_size"],
-    )
 
-    buf = io.BytesIO()
-    glb.export(buf, file_type="glb")
-    return {"glb_b64": base64.b64encode(buf.getvalue()).decode("ascii")}
+@app.get("/generate/{job_id}")
+def generate_status(job_id: str):
+    with _JOBS_LOCK:
+        job = _JOBS.get(job_id)
+    if job is None:
+        return JSONResponse({"error": "job desconhecido"}, status_code=404)
+    return job

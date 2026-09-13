@@ -203,17 +203,33 @@ def wait_until_ready(pod_id: str, timeout_s: int = POD_READY_TIMEOUT_S) -> str:
 
 
 def generate(proxy_url: str, images_b64: list[str], quality: str, seed: int) -> bytes:
+    """Submete a geração e vai perguntando pelo resultado (padrão
+    submeter+perguntar) — uma geração pode demorar mais que o timeout do
+    proxy HTTP do RunPod (~100s, confirmado na prática com um 524), por isso
+    nenhum pedido individual pode ficar à espera do resultado completo."""
     resp = requests.post(
         f"{proxy_url}/generate",
         json={"images_b64": images_b64, "quality": quality, "seed": seed},
-        timeout=GENERATE_TIMEOUT_S,
+        timeout=30,
     )
     resp.raise_for_status()
-    output = resp.json()
-    if "error" in output:
-        raise PodError(f"Worker RunPod devolveu erro: {output['error']}")
-    import base64
-    return base64.b64decode(output["glb_b64"])
+    job_id = resp.json()["job_id"]
+
+    deadline = time.monotonic() + GENERATE_TIMEOUT_S
+    while True:
+        r = requests.get(f"{proxy_url}/generate/{job_id}", timeout=30)
+        r.raise_for_status()
+        job = r.json()
+
+        if job["status"] == "done":
+            import base64
+            return base64.b64decode(job["glb_b64"])
+        if job["status"] == "error":
+            raise PodError(f"Worker RunPod devolveu erro: {job['error']}")
+
+        if time.monotonic() > deadline:
+            raise PodError(f"Geração (job {job_id}) não terminou em {GENERATE_TIMEOUT_S}s")
+        time.sleep(5)
 
 
 class PodSession:
