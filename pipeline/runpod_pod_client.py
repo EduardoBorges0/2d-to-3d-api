@@ -181,10 +181,18 @@ def wait_until_ready(pod_id: str, timeout_s: int = POD_READY_TIMEOUT_S) -> str:
     proxy_url = f"https://{pod_id}-{POD_PORT}.proxy.runpod.net"
 
     # 1) esperar o RunPod mapear a porta (pod agendado + container arrancado)
+    #
+    # Tolera falhas de rede LOCAIS aqui (ex: a nossa própria ligação a cair a
+    # meio) — não é o pod que falhou, é só não termos conseguido perguntar.
+    # Confirmado na prática: sem isto, uma quebra de rede momentânea fazia-nos
+    # desistir e apagar um pod que podia estar perfeitamente bem.
     while True:
-        pod = get_pod(pod_id)
-        if pod.get("portMappings"):
-            break
+        try:
+            pod = get_pod(pod_id)
+            if pod.get("portMappings"):
+                break
+        except requests.RequestException:
+            pass
         if time.monotonic() > deadline:
             raise PodError(f"Pod {pod_id} não ficou pronto em {timeout_s}s (sem capacidade disponível?)")
         time.sleep(5)
