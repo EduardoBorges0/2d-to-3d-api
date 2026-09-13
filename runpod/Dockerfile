@@ -30,9 +30,19 @@ FROM nvidia/cuda:12.1.0-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
-    TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9"
+    TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9" \
+    ATTN_BACKEND=xformers
     # 8.0 = A100, 8.6 = A4000/A5000/A6000 (Ampere), 8.9 = RTX 4090 (Ada) —
     # cobre as GPUs em RUNPOD_GPU_TYPE_IDS (pipeline/runpod_pod_client.py)
+    #
+    # ATTN_BACKEND=xformers: o TRELLIS (trellis/modules/attention/__init__.py)
+    # lê esta variável para escolher o backend de atenção; por omissão usa
+    # 'flash_attn', que decidimos não instalar (compilação lenta e frágil).
+    # Confirmado num pod real: sem isto, rebenta com "ModuleNotFoundError:
+    # No module named 'flash_attn'" ao construir o modelo de fluxo — e esse
+    # erro fica mascarado por um except genérico no código do TRELLIS, que
+    # mostra uma mensagem de "Repository Not Found" completamente enganadora
+    # em vez do erro real.
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
@@ -86,11 +96,9 @@ RUN git clone https://github.com/EasternJournalist/utils3d.git /opt/utils3d \
 RUN pip install --no-cache-dir xformers==0.0.27.post2 \
     --index-url https://download.pytorch.org/whl/cu121
 
-# 4) "--flash-attn" — otimização de atenção, não estritamente necessária para
-# correr o pipeline; se a compilação falhar (é lenta e pesada), não trava o
-# build, só corre um pouco mais devagar.
-RUN pip install --no-cache-dir flash-attn \
-    || echo "[build] flash-attn falhou a instalar — a continuar sem ele"
+# 4) "--flash-attn" propositadamente OMITIDO: compilação lenta/frágil, e o
+# TRELLIS funciona bem com xformers como backend de atenção (ATTN_BACKEND
+# acima) — sem necessidade de flash-attn.
 
 # 5) "--kaolin" — wheel pré-compilada (não precisa de compilar nada)
 RUN pip install --no-cache-dir kaolin \
