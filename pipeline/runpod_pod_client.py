@@ -54,9 +54,28 @@ POD_PORT = 8000
 # cara — o RunPod tenta por ordem e usa a primeira com capacidade disponível.
 GPU_TYPE_IDS_DEFAULT = [
     "NVIDIA RTX A4000",
+    "NVIDIA RTX A4500",
     "NVIDIA RTX A5000",
     "NVIDIA GeForce RTX 4090",
+    "NVIDIA GeForce RTX 4080 SUPER",
+    "NVIDIA GeForce RTX 4080",
+    "NVIDIA RTX 4000 Ada Generation",
+    "NVIDIA L4",
+    "NVIDIA RTX A6000",
+    "NVIDIA A40",
+    "NVIDIA RTX 5000 Ada Generation",
+    "NVIDIA L40",
+    "NVIDIA L40S",
+    "NVIDIA RTX 6000 Ada Generation",
+    "NVIDIA A100-SXM4-40GB",
+    "NVIDIA A100 80GB PCIe",
+    "NVIDIA A100-SXM4-80GB",
 ]
+# Todas Ampere/Ada (compute 8.0/8.6/8.9) — compatíveis com o
+# TORCH_CUDA_ARCH_LIST fixado no Dockerfile sem precisar de mudar nada. Não
+# inclui Hopper/Blackwell (H100/H200/B200/B300): precisariam de mais
+# arquiteturas no TORCH_CUDA_ARCH_LIST e, no caso do Blackwell, de uma
+# imagem base CUDA mais recente que a 12.1 (não suporta compute_100).
 
 # Sessão de lote: arranque do pod + carregamento do TRELLIS para a GPU pode
 # demorar vários minutos, sobretudo em Community Cloud (agendamento da
