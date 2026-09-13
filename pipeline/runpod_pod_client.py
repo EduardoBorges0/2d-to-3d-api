@@ -1,15 +1,25 @@
-"""Cliente para RunPod Pods (não Serverless) — liga um pod em Community Cloud,
-usa-o para gerar N peças seguidas na mesma sessão, desliga-o no fim.
+"""Cliente para RunPod Pods (não Serverless) — um pod PERSISTENTE (criado uma
+vez, depois só Start/Stop) usado para gerar N peças por sessão.
 
-Porquê Pods e não Serverless: para o volume deste catálogo (poucas peças/dia,
-processadas em lote), Community Cloud é ~4x mais barato por hora do que
-Serverless, e pagar só o tempo de uma sessão de lote (minutos) em vez de por
-pedido individual evita repetir o custo de arranque a cada peça.
+Porquê pod persistente em vez de criar/destruir a cada sessão: o disco do
+container (onde já está a nossa imagem de 12GB) não é cobrado enquanto o pod
+está parado — só a GPU pára de custar. Manter o mesmo pod e só pará-lo/
+retomá-lo evita repetir o "cold start" de puxar a imagem inteira a cada
+sessão (o que acontecia sempre que criávamos/destruíamos um pod novo, porque
+cada sessão calhava numa máquina física diferente sem a imagem em cache).
+
+Custo do disco parado: ~$0.20/GB/mês de volume (não confundir com o
+container disk, esse é grátis parado) — no nosso caso ~20GB ≈ $4/mês, mesmo
+sem gerar nada.
 
 Endpoints usados (RunPod REST API, https://docs.runpod.io/api-reference):
-    POST   /v1/pods                 -> criar/alugar o pod
+    POST   /v1/pods                 -> criar o pod (1ª vez apenas)
+    POST   /v1/pods/{id}/start      -> retomar (resume) um pod parado
+    POST   /v1/pods/{id}/stop       -> parar (sem apagar disco/imagem)
     GET    /v1/pods/{id}            -> estado (portMappings, publicIp)
-    DELETE /v1/pods/{id}            -> terminar
+    DELETE /v1/pods/{id}            -> apagar definitivamente (não usado por
+                                        omissão — só se o utilizador quiser
+                                        mesmo deixar de ter o pod)
 
 O pod corre a imagem de runpod/Dockerfile, que expõe runpod/pod_server.py
 (FastAPI) na porta RUNPOD_PORT com `/health` e `/generate`. Acede-se via o
@@ -19,6 +29,9 @@ funciona da mesma forma em Community e Secure Cloud.
 Configuração via ambiente (ver .env.example):
     RUNPOD_API_KEY          — chave de API da conta RunPod
     RUNPOD_IMAGE             — imagem Docker publicada (runpod/README.md)
+    RUNPOD_POD_ID            — id do pod persistente; vazio na 1ª vez (o
+                               PodSession cria-o e grava-o automaticamente no
+                               .env), preenchido nas vezes seguintes
     RUNPOD_GPU_TYPE_IDS      — lista separada por vírgulas, por ordem de preferência
                                (default: GPU_TYPE_IDS_DEFAULT abaixo)
     RUNPOD_CLOUD_TYPE        — "COMMUNITY" (default, mais barato) ou "SECURE"
@@ -26,9 +39,13 @@ Configuração via ambiente (ver .env.example):
 """
 
 import os
+import re
 import time
+from pathlib import Path
 
 import requests
+
+ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
 
 REST_API_BASE = "https://rest.runpod.io/v1"
 POD_PORT = 8000
@@ -87,7 +104,7 @@ def create_pod() -> str:
         "computeType": "GPU",
         "gpuTypeIds": _gpu_type_ids(),
         "gpuCount": 1,
-        "containerDiskInGb": int(os.environ.get("RUNPOD_CONTAINER_DISK_GB", 40)),
+        "containerDiskInGb": int(os.environ.get("RUNPOD_CONTAINER_DISK_GB", 35)),
         "ports": [f"{POD_PORT}/http"],
     }
     resp = requests.post(f"{REST_API_BASE}/pods", headers=_headers(api_key), json=payload, timeout=30)
@@ -104,8 +121,38 @@ def get_pod(pod_id: str) -> dict:
 
 
 def terminate_pod(pod_id: str):
+    """Apaga o pod definitivamente (perde a imagem em cache no disco). Não é
+    chamado automaticamente pelo PodSession — só para quem quiser mesmo
+    deixar de ter o pod persistente (ex: CLI --forget-pod, ou à mão)."""
     api_key, _ = _config()
     requests.delete(f"{REST_API_BASE}/pods/{pod_id}", headers=_headers(api_key), timeout=30)
+
+
+def start_pod(pod_id: str):
+    api_key, _ = _config()
+    resp = requests.post(f"{REST_API_BASE}/pods/{pod_id}/start", headers=_headers(api_key), timeout=30)
+    if resp.status_code >= 400:
+        raise PodError(f"Falha ao retomar pod {pod_id} (HTTP {resp.status_code}): {resp.text}")
+
+
+def stop_pod(pod_id: str):
+    api_key, _ = _config()
+    requests.post(f"{REST_API_BASE}/pods/{pod_id}/stop", headers=_headers(api_key), timeout=30)
+
+
+def _save_pod_id_to_env(pod_id: str):
+    """Grava RUNPOD_POD_ID no .env automaticamente, para a próxima sessão
+    reutilizar o mesmo pod sem precisar de o criar de novo. Só acontece na
+    1ª vez (quando ainda não há RUNPOD_POD_ID no ambiente)."""
+    if not ENV_PATH.exists():
+        return
+    text = ENV_PATH.read_text(encoding="utf-8")
+    if re.search(r"^RUNPOD_POD_ID=.*$", text, flags=re.MULTILINE):
+        text = re.sub(r"^RUNPOD_POD_ID=.*$", f"RUNPOD_POD_ID={pod_id}", text, flags=re.MULTILINE)
+    else:
+        text = text.rstrip("\n") + f"\nRUNPOD_POD_ID={pod_id}\n"
+    ENV_PATH.write_text(text, encoding="utf-8")
+    os.environ["RUNPOD_POD_ID"] = pod_id
 
 
 def wait_until_ready(pod_id: str, timeout_s: int = POD_READY_TIMEOUT_S) -> str:
@@ -151,19 +198,45 @@ def generate(proxy_url: str, images_b64: list[str], quality: str, seed: int) -> 
 
 
 class PodSession:
-    """Context manager: liga um pod, dá acesso a .generate(...) para 1+ peças,
-    termina o pod no fim (mesmo em caso de erro) — é o padrão "1 sessão de lote"."""
+    """Context manager para o pod PERSISTENTE: na 1ª vez cria-o (e grava o id
+    em RUNPOD_POD_ID no .env); nas vezes seguintes só o retoma (Start). Dá
+    acesso a .generate(...) para 1+ peças, e PÁRA o pod no fim (Stop, não
+    Terminate — mantém o disco/imagem para a próxima sessão arrancar mais
+    depressa)."""
 
     def __init__(self):
-        self.pod_id = None
+        self.pod_id = os.environ.get("RUNPOD_POD_ID") or None
         self.proxy_url = None
+        self._criado_agora = False
 
     def __enter__(self):
-        self.pod_id = create_pod()
+        if self.pod_id is None:
+            self.pod_id = create_pod()
+            self._criado_agora = True
+            _save_pod_id_to_env(self.pod_id)
+            print(f"[runpod] pod persistente criado: {self.pod_id} (gravado em .env como RUNPOD_POD_ID)")
+        else:
+            try:
+                start_pod(self.pod_id)
+            except PodError:
+                # RUNPOD_POD_ID no .env aponta para um pod que já não existe
+                # (ex: apagado à mão na consola) — cria um novo em vez de
+                # falhar para sempre com o mesmo id inválido.
+                print(f"[runpod] pod guardado ({self.pod_id}) já não existe — a criar um novo")
+                self.pod_id = create_pod()
+                self._criado_agora = True
+                _save_pod_id_to_env(self.pod_id)
+
         try:
             self.proxy_url = wait_until_ready(self.pod_id)
         except Exception:
-            terminate_pod(self.pod_id)
+            # Nunca deixa o pod ligado a gastar depois de uma falha: pára-o
+            # sempre; se foi criado agora mesmo (nunca chegou a ficar
+            # utilizável), termina-o também — não vale a pena manter o disco
+            # de um pod que nunca funcionou.
+            stop_pod(self.pod_id)
+            if self._criado_agora:
+                terminate_pod(self.pod_id)
             raise
         return self
 
@@ -172,5 +245,5 @@ class PodSession:
 
     def __exit__(self, exc_type, exc, tb):
         if self.pod_id:
-            terminate_pod(self.pod_id)
+            stop_pod(self.pod_id)
         return False

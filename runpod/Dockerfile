@@ -91,17 +91,24 @@ RUN pip install --no-cache-dir kaolin \
 # 6) "--nvdiffrast" — o setup.py precisa de ver o torch já instalado (senão
 # falha com "Cannot compile nvdiffrast CUDA extension"), por isso
 # --no-build-isolation (não deixar o pip criar um venv de build isolado).
+# Verificação a seguir: confirmámos num pod real que este passo "passava"
+# sem erro mas produzia um pacote partido (import falhava em runtime) —
+# por isso testamos mesmo o import aqui, para o BUILD falhar já, não só
+# ao ligar um pod (mais lento e com custo).
 RUN git clone https://github.com/NVlabs/nvdiffrast.git /tmp/extensions/nvdiffrast \
-    && pip install --no-cache-dir --no-build-isolation /tmp/extensions/nvdiffrast
+    && pip install --no-cache-dir --no-build-isolation -v /tmp/extensions/nvdiffrast
+RUN python -c "import nvdiffrast.torch; print('[verify] nvdiffrast OK')"
 
 # 7) "--diffoctreerast" — compila kernels CUDA já no build (TORCH_CUDA_ARCH_LIST
 # acima); mesmo motivo do --no-build-isolation que o nvdiffrast.
 RUN git clone --recurse-submodules https://github.com/JeffreyXiang/diffoctreerast.git /tmp/extensions/diffoctreerast \
     && pip install --no-cache-dir --no-build-isolation /tmp/extensions/diffoctreerast
+RUN python -c "import diffoctreerast; print('[verify] diffoctreerast OK')"
 
 # 8) "--mipgaussian" (mip-splatting / diff-gaussian-rasterization)
 RUN git clone https://github.com/autonomousvision/mip-splatting.git /tmp/extensions/mip-splatting \
     && pip install --no-cache-dir --no-build-isolation /tmp/extensions/mip-splatting/submodules/diff-gaussian-rasterization/
+RUN python -c "import diff_gaussian_rasterization; print('[verify] diff_gaussian_rasterization OK')"
 
 # 9) "--spconv" — wheel pré-compilada
 RUN pip install --no-cache-dir spconv-cu120

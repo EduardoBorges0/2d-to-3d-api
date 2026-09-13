@@ -77,24 +77,26 @@ Depende de `PyMuPDF` (fitz), `pytesseract` (+ Tesseract instalado no sistema) e 
 
 ## 3. Pipeline TRELLIS (fotos → GLB, via RunPod — por sessão de lote)
 
-`pipeline/trellis_pipeline.py` orquestra a geração: liga um pod RunPod (Community
-Cloud, `pipeline/runpod_pod_client.py`), que corre o
+`pipeline/trellis_pipeline.py` orquestra a geração: liga um pod RunPod PERSISTENTE
+(Community Cloud, `pipeline/runpod_pod_client.py`), que corre o
 [TRELLIS (Microsoft)](https://github.com/microsoft/TRELLIS) numa GPU alugada, gera
-1+ peças na mesma sessão, e desliga o pod no fim. Este `.venv` local **não precisa de
-GPU nem de instalar o TRELLIS**.
+1+ peças na mesma sessão, e **pára** o pod no fim (não termina). Este `.venv` local
+**não precisa de GPU nem de instalar o TRELLIS**.
 
 Optou-se por **Pod + Community Cloud** em vez de RunPod Serverless porque, para o
-volume esperado (poucas peças/dia), sai ~4x mais barato por hora de GPU e evita pagar
-o arranque do modelo a cada pedido individual — uma sessão arranca 1x e processa tudo
-o que estiver pendente nesse momento. Ver `runpod/README.md` para os números e o
-racional completo.
+volume esperado (poucas peças/dia), sai ~4x mais barato por hora de GPU. E optou-se
+por um pod **persistente** (criado uma vez, depois só Start/Stop) em vez de
+criar/destruir a cada sessão porque o disco do container (com a imagem de ~12GB) não é
+cobrado enquanto o pod está parado — só a GPU pára de custar — e assim evita-se repetir
+o "cold start" de puxar a imagem inteira a cada sessão. Ver `runpod/README.md` para os
+números e o racional completo.
 
 ### Setup (uma vez) — publicar a imagem
 
 Seguir `runpod/README.md`: build+push da imagem Docker (`runpod/Dockerfile` +
 `runpod/pod_server.py`), copiar `RUNPOD_API_KEY`/`RUNPOD_IMAGE` para o `.env` da raiz
-(ver `.env.example`). Não há endpoint nenhum para criar na consola — os pods são
-criados/destruídos por sessão, via API.
+(ver `.env.example`, deixar `RUNPOD_POD_ID` vazio — preenche-se sozinho na 1ª sessão).
+Não há endpoint nenhum para criar na consola — o pod é criado pelo próprio código.
 
 Sem `.env` preenchido, `server.py` continua a funcionar — os pedidos ficam com estado
 `erro` e a mensagem `RUNPOD_API_KEY e/ou RUNPOD_IMAGE não definidos...`, em vez de
