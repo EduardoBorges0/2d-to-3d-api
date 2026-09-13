@@ -54,6 +54,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN ln -sf /usr/bin/python3.10 /usr/bin/python
 
+# O pip que vem do apt (Ubuntu 22.04) é muito antigo (22.0.2) e tem um bug
+# conhecido: para pacotes com pyproject.toml E setup.py no mesmo repo (caso
+# do nvdiffrast e do utils3d), não lê o nome em [project.name] e instala tudo
+# como um pacote genérico "UNKNOWN" — confirmado no build real (2 pacotes
+# diferentes com o mesmo sintoma). Atualizar aqui, antes de instalar mais
+# nada, resolve na origem.
+RUN python -m pip install --no-cache-dir --upgrade pip setuptools wheel
+
 WORKDIR /workspace
 
 # 1) PyTorch (cu121, para combinar com a imagem base CUDA 12.1)
