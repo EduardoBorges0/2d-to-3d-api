@@ -26,7 +26,17 @@
 #
 # Depois: ver runpod/README.md para configurar RUNPOD_API_KEY/RUNPOD_IMAGE.
 
-FROM nvidia/cuda:12.1.0-devel-ubuntu22.04
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
+# Antes era 12.1.0 (marcada DEPRECATED/scheduled for deletion pela NVIDIA).
+# Confirmado em 3 hosts reais diferentes do RunPod Community Cloud (2 pods
+# criados por nós + 1 criado manualmente na consola, GPUs diferentes) que a
+# 12.1.0 dava sempre "CUDA unknown error" (Warp CUDA error 999) ao tentar
+# inicializar o driver dentro do container — em 3 hosts distintos, não é
+# plausível ser coincidência de hardware avariado; aponta para a própria
+# imagem base. 12.4.1 é uma tag atual, ainda suportada. As wheels de
+# torch/xformers continuam fixadas em cu121 (compatibilidade CUDA 12.x é
+# retro/anterógrada dentro da mesma major version) — só a imagem base do
+# sistema (nvcc, libs de desenvolvimento) muda.
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
