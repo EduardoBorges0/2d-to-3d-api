@@ -228,15 +228,26 @@ def generate(proxy_url: str, images_b64: list[str], quality: str, seed: int) -> 
 
     deadline = time.monotonic() + GENERATE_TIMEOUT_S
     while True:
-        r = requests.get(f"{proxy_url}/generate/{job_id}", timeout=30)
-        r.raise_for_status()
-        job = r.json()
-
-        if job["status"] == "done":
-            import base64
-            return base64.b64decode(job["glb_b64"])
-        if job["status"] == "error":
-            raise PodError(f"Worker RunPod devolveu erro: {job['error']}")
+        # Tolera falhas de rede e erros 5xx transitórios (ex: 502 do proxy do
+        # RunPod a meio de uma geração) — confirmado na prática: um único 502
+        # passageiro no meio do polling abortava a geração inteira mesmo com
+        # o pod a continuar a trabalhar perfeitamente bem em segundo plano
+        # (o job real corre numa thread à parte no pod_server, alheio a
+        # falhas de rede neste pedido de estado). Um 4xx (ex: 404 "job
+        # desconhecido") continua a ser fatal — esse sim indica um problema
+        # real (job perdido, ex: o pod reiniciou).
+        try:
+            r = requests.get(f"{proxy_url}/generate/{job_id}", timeout=30)
+            if r.status_code < 500:
+                r.raise_for_status()
+                job = r.json()
+                if job["status"] == "done":
+                    import base64
+                    return base64.b64decode(job["glb_b64"])
+                if job["status"] == "error":
+                    raise PodError(f"Worker RunPod devolveu erro: {job['error']}")
+        except requests.RequestException:
+            pass
 
         if time.monotonic() > deadline:
             raise PodError(f"Geração (job {job_id}) não terminou em {GENERATE_TIMEOUT_S}s")
