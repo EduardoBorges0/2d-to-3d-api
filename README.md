@@ -1,210 +1,95 @@
-# Catálogo 3D de Peças — Almovi
+# TRELLIS no RunPod — imagem→3D
 
-Pipeline: fotos de peças → TRELLIS no RunPod (image-to-3D) → GLB → catálogo web com
-visualizador e edição por texto, seguindo o design system Almovi.
+Container Docker que corre o [TRELLIS](https://github.com/microsoft/TRELLIS) (Microsoft,
+`microsoft/TRELLIS-image-large`, 1.2B parâmetros, MIT) num pod RunPod alugado: recebe 1+
+fotos de um objeto, devolve um `.glb` (modelo 3D) gerado por IA generativa.
 
 ## Estrutura
 
 ```
 2d-to-3d-api/
-├── photos_input/            # fotos de cada peça (1 subpasta por peça, ex: photos_input/valvula-002/*.jpg)
-├── pipeline/
-│   ├── manual_pipeline.py   # extração de imagens+legendas de manuais técnicos (PDF)
-│   ├── trellis_pipeline.py  # fotos -> RunPod (TRELLIS) -> GLB, atualiza catalog/data/parts.json
-│   ├── runpod_pod_client.py # liga/desliga um pod RunPod (Secure Cloud) por sessão de lote
-│   ├── edit_pipeline.py     # edição por texto (furo/saliência paramétricos) sobre um GLB existente
-│   ├── server.py            # backend FastAPI: catálogo + "Adicionar peça" + "Processar pendentes" + "Editar por texto"
-│   └── requirements.txt
 ├── runpod/
-│   ├── pod_server.py        # servidor (FastAPI) que corre DENTRO do pod, carrega o TRELLIS
-│   ├── Dockerfile           # imagem do pod (build/push manual, ver runpod/README.md)
-│   └── README.md            # passos manuais: publicar a imagem + credenciais
-├── catalog/
-│   ├── index.html           # visualizador web (design system Almovi)
-│   ├── app.js
-│   ├── styles.css
-│   ├── data/parts.json      # catálogo de peças (fonte de dados do visualizador)
-│   └── models/*.glb         # modelos 3D gerados (e versões editadas: <id>_v2.glb, <id>_v3.glb, ...)
-├── .venv/                   # ambiente virtual Python deste projeto (não versionar)
-├── .env                     # RUNPOD_API_KEY, RUNPOD_IMAGE, ANTHROPIC_API_KEY (não versionar, ver .env.example)
-└── .claude/launch.json      # arranca pipeline/server.py em localhost:8791 para pré-visualização
+│   ├── Dockerfile           # imagem do pod: CUDA + TRELLIS + dependências, build/push via CI
+│   ├── pod_server.py        # servidor (FastAPI) que corre DENTRO do pod — carrega o TRELLIS
+│   │                          uma vez, expõe /health + /generate
+│   └── README.md            # setup completo: build+push da imagem, credenciais, custos
+├── pipeline/
+│   ├── runpod_pod_client.py # cliente: cria/liga/desliga o pod, chama /generate
+│   ├── trellis_pipeline.py  # exemplo de CLI sobre o cliente (fotos -> .glb)
+│   └── requirements.txt
+├── .github/workflows/publicar-imagem-trellis.yml  # build+push automático da imagem (GitHub Actions)
+└── .env                     # RUNPOD_API_KEY, RUNPOD_IMAGE (não versionar, ver .env.example)
 ```
 
-## 0. Setup (uma vez) — ambiente virtual + credenciais
+## O modelo
 
-Há várias instalações de Python nesta máquina (`py`, `python`, etc. podem apontar para
-sítios diferentes e causar `ModuleNotFoundError`). Para evitar esse problema, usa sempre
-o `.venv` deste projeto:
+[TRELLIS](https://github.com/microsoft/TRELLIS) (CVPR'25 Spotlight, Microsoft) gera uma
+malha 3D texturada a partir de 1+ imagens de um objeto isolado (fundo removido
+automaticamente). Não é fotogrametria/digitalização métrica — é geração generativa: boa
+para visualização/catálogo, não garante medidas exatas da peça real.
+
+A imagem publicada (`runpod/Dockerfile`) compila algumas das dependências CUDA do TRELLIS
+a partir do código-fonte (`spconv`, `cumm`, `nvdiffrast`, `diffoctreerast`,
+`diff_gaussian_rasterization`) em vez de usar wheels pré-compiladas — algumas wheels
+públicas são antigas o suficiente para dar crashes nativos (sem traceback) em hosts com
+drivers NVIDIA recentes; ver comentários no próprio Dockerfile para o histórico completo.
+
+## Setup (uma vez) — publicar a imagem
+
+Ver `runpod/README.md` para o passo a passo completo (build+push, credenciais,
+`RUNPOD_CLOUD_TYPE`, custos reais medidos). Resumo:
+
+1. Build+push da imagem — automático via GitHub Actions
+   (`.github/workflows/publicar-imagem-trellis.yml`) a cada alteração em `runpod/`, ou
+   manual: `docker build -t <utilizador>/2d-to-3d-trellis:latest -f runpod/Dockerfile .`
+2. Copiar `.env.example` para `.env`, preencher `RUNPOD_API_KEY` (consola RunPod →
+   Settings → API Keys) e `RUNPOD_IMAGE` (a imagem publicada no passo 1). Deixar
+   `RUNPOD_POD_ID` vazio — o próprio código cria o pod na 1ª sessão e grava o id aí.
+
+Não há endpoint nenhum para criar manualmente na consola RunPod — o pod (persistente,
+Secure Cloud por omissão) é criado e gerido pelo próprio código
+(`pipeline/runpod_pod_client.py`).
+
+## Uso
 
 ```powershell
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r pipeline\requirements.txt
 ```
 
-Este `.venv` já não precisa de torch/CUDA — a inferência do TRELLIS corre num pod
-RunPod ligado por sessão de lote (ver `runpod/README.md`, passo único: publicar a
-imagem Docker — não há endpoint nenhum para criar na consola).
+Direto pelo cliente (`pipeline/runpod_pod_client.py`) — liga o pod, gera, desliga:
 
-Copiar `.env.example` para `.env` e preencher `RUNPOD_API_KEY`, `RUNPOD_IMAGE`
-(a imagem publicada em `runpod/README.md`) e `ANTHROPIC_API_KEY` (usada por
-`edit_pipeline.py` para interpretar as instruções de edição por texto).
+```python
+import base64
+from pipeline import runpod_pod_client as rpc
 
-## 1. Ligar o servidor (catálogo + API)
-
-```powershell
-.venv\Scripts\python.exe pipeline\server.py
+with rpc.PodSession() as session:
+    images_b64 = [base64.b64encode(open(p, "rb").read()).decode("ascii") for p in ["foto1.jpg", "foto2.jpg"]]
+    glb_bytes = session.generate(images_b64, quality="quality", seed=1)  # "fast" para iterar mais depressa
+    open("peca.glb", "wb").write(glb_bytes)
 ```
 
-Depois abrir `http://localhost:8791`. Contém 3 peças placeholder (`suporte`, `válvula`,
-`vedante`) para validar grid, pesquisa, filtros, badges e modal 3D, mais botões:
-**Adicionar peça** (upload de fotos → fica em fila, `estado: "a_processar"`),
-**Processar pendentes** (liga 1 pod RunPod, gera todas as peças em fila, desliga o pod) e
-**Gerar peça (TRELLIS)**, na barra lateral — teste rápido: upload de foto(s) → gera no
-RunPod → mostra o modelo 3D ali mesmo no visualizador, **sem gravar nada** (não cria
-entrada no catálogo nem `.glb` em disco — o resultado vive só na memória do servidor e do
-browser enquanto o modal estiver aberto). Útil para testar imagens/qualidade sem sujar o
-catálogo real (ver `POST /api/test-generate` em `pipeline/server.py`).
+Múltiplas imagens da mesma peça (ângulos diferentes) tendem a dar melhor geometria — o
+`pod_server.py` usa automaticamente o modo multi-imagem do TRELLIS quando recebe mais que
+uma foto.
 
-Não abrir `catalog/index.html` diretamente no browser (`file://`) — o `fetch` do
-`parts.json` e o upload de fotos precisam do servidor.
+`pipeline/trellis_pipeline.py` é um exemplo de CLI construído sobre este cliente
+(`--input <pasta_de_fotos> --part-id X --quality quality`) — grava o `.glb` e alguns
+metadados num `catalog/` local que não faz parte deste repositório; serve de referência,
+não é obrigatório usá-lo.
 
-## 2. Pipeline de extração (manuais técnicos)
+## Contrato do servidor dentro do pod (`runpod/pod_server.py`)
 
-`pipeline/manual_pipeline.py` já existia e extrai imagens + legendas associadas de PDFs
-de manuais técnicos (útil como fonte de fotos/diagramas de peças a alimentar o TRELLIS
-quando não há fotografia própria da peça).
+- `GET /health` — 200 assim que o TRELLIS estiver carregado na GPU
+- `POST /generate` — `{images_b64, quality, seed}` → `{job_id}` (não bloqueia — uma
+  geração pode demorar mais que o timeout do proxy HTTP do RunPod)
+- `GET /generate/{job_id}` — `{status: pending|done|error, glb_b64?, error?}`
 
-```powershell
-.venv\Scripts\python.exe pipeline\manual_pipeline.py caminho_para_manual.pdf
-```
+## Porquê pod persistente (não Serverless, não recriado a cada sessão)
 
-Depende de `PyMuPDF` (fitz), `pytesseract` (+ Tesseract instalado no sistema) e `Pillow`.
-
-## 3. Pipeline TRELLIS (fotos → GLB, via RunPod — por sessão de lote)
-
-`pipeline/trellis_pipeline.py` orquestra a geração: liga um pod RunPod PERSISTENTE
-(Secure Cloud, `pipeline/runpod_pod_client.py`), que corre o
-[TRELLIS (Microsoft)](https://github.com/microsoft/TRELLIS) numa GPU alugada, gera
-1+ peças na mesma sessão, e **pára** o pod no fim (não termina). Este `.venv` local
-**não precisa de GPU nem de instalar o TRELLIS**.
-
-Optou-se por **Pod** em vez de RunPod Serverless porque, para o volume esperado
-(poucas peças/dia), sai mais barato por hora de GPU. Dentro de Pod, testámos primeiro
-Community Cloud pela economia adicional (~4x mais barato por hora), mas essa opção deu
-sempre "CUDA unknown error" em vários hosts/GPUs diferentes (qualidade de host
-inconsistente, não é bug nosso) — confirmado testando o mesmo setup em **Secure Cloud**
-(datacenters próprios do RunPod), onde funcionou de forma fiável. Ficou Secure Cloud por
-omissão; ver `RUNPOD_CLOUD_TYPE` em `.env.example` para voltar a tentar Community Cloud.
-E optou-se por um pod **persistente** (criado uma vez, depois só Start/Stop) em vez de
-criar/destruir a cada sessão porque o disco do container (com a imagem de ~12GB) não é
-cobrado enquanto o pod está parado — só a GPU pára de custar — e assim evita-se repetir
-o "cold start" de puxar a imagem inteira a cada sessão. Ver `runpod/README.md` para os
-números e o racional completo.
-
-### Setup (uma vez) — publicar a imagem
-
-Seguir `runpod/README.md`: build+push da imagem Docker (`runpod/Dockerfile` +
-`runpod/pod_server.py`), copiar `RUNPOD_API_KEY`/`RUNPOD_IMAGE` para o `.env` da raiz
-(ver `.env.example`, deixar `RUNPOD_POD_ID` vazio — preenche-se sozinho na 1ª sessão).
-Não há endpoint nenhum para criar na consola — o pod é criado pelo próprio código.
-
-Sem `.env` preenchido, `server.py` continua a funcionar — os pedidos ficam com estado
-`erro` e a mensagem `RUNPOD_API_KEY e/ou RUNPOD_IMAGE não definidos...`, em vez de
-falhar em silêncio.
-
-### Uso
-
-Organizar as fotos por peça:
-
-```
-photos_input/
-├── suporte-002/
-│   ├── foto1.jpg
-│   └── foto2.jpg   # múltiplas vistas = melhor geometria (usa run_multi_image)
-└── valvula-003/
-    └── foto1.jpg
-```
-
-**Modo do dia-a-dia** — processar tudo o que está em fila (`a_processar`, vindo do
-"Adicionar peça" do site) numa única sessão de pod: pelo botão **Processar pendentes**
-no site, ou por CLI (ex: numa tarefa agendada 1x/dia):
-
-```powershell
-.venv\Scripts\python.exe pipeline\trellis_pipeline.py --pending --quality quality
-```
-
-Alternativas para uso pontual/CLI direto (também abrem e fecham a sua própria sessão):
-
-```powershell
-# 1 peça específica
-.venv\Scripts\python.exe pipeline\trellis_pipeline.py `
-  --input photos_input\suporte-002 --part-id suporte-002 `
-  --nome "Suporte de fixação (variante 2)" --categoria Estrutura `
-  --equipamento "Grua de aranha" --referencia SUP-002 `
-  --quality quality
-
-# todas as subpastas de photos_input/ de uma vez (ignora o estado no catálogo)
-.venv\Scripts\python.exe pipeline\trellis_pipeline.py --batch photos_input --quality quality
-```
-
-O script, para cada peça processada:
-1. Envia as fotos à sessão de pod ativa (`quality` = mais steps + texturas 2048px;
-   `fast` = iteração rápida)
-2. Exporta o `.glb` para `catalog/models/<part-id>.glb`
-3. Atualiza (ou cria) a entrada correspondente em `catalog/data/parts.json` com
-   `estado: "gerado"` — aparece automaticamente no visualizador ao dar refresh/Atualizar
-
-Usar `--dry-run` para validar pastas de fotos e a escrita no catálogo sem ligar
-nenhum pod (não gera GLB real, não tem custo).
-
-### Estados de uma peça no catálogo
-
-- `placeholder` — modelo de teste, não é a peça real (badge cinza)
-- `a_processar` — fotos recebidas via "Adicionar peça", em fila para o próximo
-  processamento em lote (badge amarelo "Pendente (lote)") — não arranca nada sozinho
-- `a_editar` — uma edição por texto está a ser aplicada (badge amarelo, spinner)
-- `gerado` — saiu do TRELLIS (ou de uma edição aplicada com sucesso), ainda por validar visualmente (badge azul)
-- `aprovado` — revisto e validado para publicação (badge verde) — marcar manualmente
-  no `parts.json` depois de conferir o modelo
-- `erro` — o pipeline (geração ou edição) falhou; a mensagem de erro real fica guardada
-  no campo `erro` e visível no modal de detalhe. As fotos ficam em
-  `photos_input/<id>/`. "Processar pendentes" **não repete automaticamente** peças em
-  `erro` (só apanha `a_processar`) — para reprocessar depois de corrigir a causa, muda
-  o `estado` de volta para `"a_processar"` no `parts.json` (ou usa `--input` diretamente
-  para essa peça).
-
-## 4. Editar peça por texto (furo/saliência)
-
-No modal de detalhe de uma peça já `gerado`, a caixa "Editar por texto" aceita
-instruções como:
-
-- "adicionar buraco de chaveiro de 50mm no topo"
-- "criar uma saliência cilíndrica de 10mm no fundo, no canto superior esquerdo"
-
-Isto **não é edição 3D generativa** — é uma operação CAD paramétrica real
-(`pipeline/edit_pipeline.py`): o Claude interpreta o texto como furo (`hole`) ou
-saliência (`boss`) cilíndricos com diâmetro/face definidos, e uma booleana
-(`trimesh` + `manifold3d`) corta/funde um cilindro na malha existente. Se o texto não
-mapear claramente para isto (dimensão em falta, pedido de edição livre/orgânica), a peça
-fica em `erro` com o motivo — nunca inventa valores.
-
-**Limitação conhecida (aceite para esta 1ª versão):** não há clique no visualizador para
-apontar o sítio exato — a posição é resolvida por heurística (face pedida + bounding box
-da peça, assumindo GLB Z-up, confirmado nos modelos deste catálogo: topo/fundo = eixo Z,
-frente/trás = eixo Y, esquerda/direita = eixo X). Para peças com geometria não-convexa
-(ex: um suporte em L) a posição pedida pode cair fora do material real — nesse caso a
-edição falha com um erro explícito em vez de não fazer nada silenciosamente. Confirmar
-sempre no visualizador antes de aprovar.
-
-Cada edição bem-sucedida gera uma **nova versão** do `.glb`
-(`catalog/models/<id>_v2.glb`, `_v3.glb`, ...) sem apagar a anterior, e fica registada em
-`historico_edicoes` no `parts.json` (texto pedido + resultado), visível no modal.
-
-## Próximos passos sugeridos
-
-- Passo de revisão: alguém marca `gerado` → `aprovado` depois de olhar para o modelo
-- Ação de "reprocessar" no visualizador para peças em `erro` (hoje só via edição manual do `parts.json` ou `--input`)
-- Agendar `trellis_pipeline.py --pending` (Task Scheduler no Windows, ou cron) para
-  correr sozinho 1x/dia, sem depender de alguém clicar "Processar pendentes"
-- Editor: suportar mais operações (chanfro, rasgo) e, se a heurística de posição não for
-  fiável o suficiente na prática, um clique no visualizador para apontar o ponto exato
+Para o volume esperado (poucas gerações/dia), um pod Community/Secure Cloud com
+Start/Stop sai mais barato por hora de GPU que RunPod Serverless, e manter o mesmo pod
+(só parar/retomar, nunca apagar) evita repetir o "cold start" de puxar a imagem inteira
+(~12GB) a cada sessão — o container disk fica em cache enquanto o pod está parado, sem
+custo. Custos reais medidos e o racional completo (incluindo porque Secure Cloud e não
+Community Cloud) estão em `runpod/README.md`.
