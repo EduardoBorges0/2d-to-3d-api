@@ -26,17 +26,25 @@
 #
 # Depois: ver runpod/README.md para configurar RUNPOD_API_KEY/RUNPOD_IMAGE.
 
-FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
-# Antes era 12.1.0 (marcada DEPRECATED/scheduled for deletion pela NVIDIA).
-# Confirmado em 3 hosts reais diferentes do RunPod Community Cloud (2 pods
-# criados por nós + 1 criado manualmente na consola, GPUs diferentes) que a
-# 12.1.0 dava sempre "CUDA unknown error" (Warp CUDA error 999) ao tentar
-# inicializar o driver dentro do container — em 3 hosts distintos, não é
-# plausível ser coincidência de hardware avariado; aponta para a própria
-# imagem base. 12.4.1 é uma tag atual, ainda suportada. As wheels de
-# torch/xformers continuam fixadas em cu121 (compatibilidade CUDA 12.x é
-# retro/anterógrada dentro da mesma major version) — só a imagem base do
-# sistema (nvcc, libs de desenvolvimento) muda.
+FROM nvidia/cuda:12.1.0-devel-ubuntu22.04
+# Voltámos a 12.1.0 (tínhamos passado brevemente para 12.4.1). O "CUDA
+# unknown error" que nos fez suspeitar da imagem 12.1.0 afinal tinha DUAS
+# causas reais, nada a ver com a versão da imagem: (1) o RunPod anexava por
+# omissão um volume de 20GB em /workspace que tapava o conteúdo da imagem
+# (ver pipeline/runpod_pod_client.py, volumeInGb=0), e (2) qualidade
+# inconsistente de hosts no Community Cloud (resolvido testando em Secure
+# Cloud). Com essas duas causas corrigidas, a imagem 12.1.0 voltou a
+# funcionar perfeitamente (nvidia-smi OK, TRELLIS carregado, geração real a
+# correr). Entretanto, com a 12.4.1, apareceu um crash nativo (processo
+# inteiro morre, sem traceback Python) sempre no mesmo ponto — logo ao
+# início da fase de slat sampling — reproduzido em 2 GPUs diferentes (A40 e
+# RTX 4090). Suspeita: as nossas extensões CUDA (nvdiffrast, diffoctreerast,
+# diff_gaussian_rasterization) são compiladas no build com o nvcc da imagem
+# base, mas o torch/xformers continuam fixados em wheels cu121 — com base
+# 12.4.1 isso passa a ser um desalinhamento real de toolkit (12.4) vs ABI
+# esperada pelo torch (12.1), que a 12.1.0 nunca teve. Voltar a 12.1.0
+# elimina essa fonte de crash sem reintroduzir o problema original (que já
+# sabemos não ser da imagem).
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
