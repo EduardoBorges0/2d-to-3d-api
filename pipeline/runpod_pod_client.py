@@ -190,24 +190,17 @@ def wait_until_ready(pod_id: str, timeout_s: int = POD_READY_TIMEOUT_S) -> str:
     deadline = time.monotonic() + timeout_s
     proxy_url = f"https://{pod_id}-{POD_PORT}.proxy.runpod.net"
 
-    # 1) esperar o RunPod mapear a porta (pod agendado + container arrancado)
+    # Só há um sinal fiável de "pronto": o /health responder 200 — é isso que
+    # realmente nos interessa (pod agendado + container arrancado + TRELLIS
+    # carregado). Antes havia um passo prévio que esperava por
+    # pod.get("portMappings") no GET /pods/{id}; confirmado num pod real
+    # (Secure Cloud) que esse campo nunca ficava preenchido mesmo com o
+    # servidor já a responder normalmente (logs do próprio pod mostravam
+    # "TRELLIS carregado, pod pronto para gerar" e pedidos HTTP a serem
+    # servidos) — o script desistia e apagava um pod perfeitamente saudável.
     #
-    # Tolera falhas de rede LOCAIS aqui (ex: a nossa própria ligação a cair a
-    # meio) — não é o pod que falhou, é só não termos conseguido perguntar.
-    # Confirmado na prática: sem isto, uma quebra de rede momentânea fazia-nos
-    # desistir e apagar um pod que podia estar perfeitamente bem.
-    while True:
-        try:
-            pod = get_pod(pod_id)
-            if pod.get("portMappings"):
-                break
-        except requests.RequestException:
-            pass
-        if time.monotonic() > deadline:
-            raise PodError(f"Pod {pod_id} não ficou pronto em {timeout_s}s (sem capacidade disponível?)")
-        time.sleep(5)
-
-    # 2) esperar o handler FastAPI + TRELLIS (carregamento do modelo) responder
+    # Tolera falhas de rede (locais ou o proxy ainda não estar disponível
+    # porque o pod ainda não arrancou) — só desiste ao fim do timeout.
     while True:
         try:
             r = requests.get(f"{proxy_url}/health", timeout=10)
@@ -216,7 +209,7 @@ def wait_until_ready(pod_id: str, timeout_s: int = POD_READY_TIMEOUT_S) -> str:
         except requests.RequestException:
             pass
         if time.monotonic() > deadline:
-            raise PodError(f"Servidor TRELLIS no pod {pod_id} não respondeu em {timeout_s}s")
+            raise PodError(f"Pod {pod_id} não respondeu em /health dentro de {timeout_s}s (sem capacidade disponível, ou falha no arranque do servidor)")
         time.sleep(5)
 
 
