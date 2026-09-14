@@ -158,13 +158,18 @@ RUN python -c "import diff_gaussian_rasterization; print('[verify] diff_gaussian
 # CUMM_CUDA_ARCH_LIST usa o mesmo formato/lista que TORCH_CUDA_ARCH_LIST
 # acima, para cobrir as mesmas GPUs.
 ENV CUMM_CUDA_ARCH_LIST="8.0;8.6;8.9" \
-    CUMM_DISABLE_JIT="1"
-    # CUMM_DISABLE_JIT=1: sem isto, "pip install ." (não-editável) não compila
-    # NADA de código C++/CUDA (nem no build nem por JIT depois — o JIT é só
-    # para "pip install -e ." em modo de desenvolvimento) — confirmado no
-    # build real: instalava sem erro mas "import spconv.pytorch" rebentava
-    # com "ModuleNotFoundError: No module named 'spconv.core_cc'" (a
-    # extensão nativa nunca tinha sido compilada).
+    CUMM_DISABLE_JIT="1" \
+    SPCONV_DISABLE_JIT="1"
+    # CUMM_DISABLE_JIT / SPCONV_DISABLE_JIT: nomes confusos, mas =1 é o que
+    # ATIVA a compilação real (AOT) em cada um dos dois setup.py — sem isto,
+    # cada um instala um pacote "vazio" (ext_modules=[]) que depende de JIT
+    # em runtime (só serve para "pip install -e ." em desenvolvimento).
+    # Confirmado no build real, em 2 passos: com só CUMM_DISABLE_JIT, o cumm
+    # passou a compilar a sério (wheel de ~3s/180KB para ~200s/2.9MB), mas o
+    # spconv continuou a instalar em ~2s/180KB (mesmo sintoma, variável
+    # própria — setup.py do spconv lê SPCONV_DISABLE_JIT, não herda a do
+    # cumm) — "ModuleNotFoundError: No module named 'spconv.core_cc'" ao
+    # importar (a extensão nativa nunca tinha sido compilada).
     #
     # Usa-se a tag v0.7.11 do cumm (não a branch main — o próprio README do
     # cumm avisa "code in main branch may contain bugs"), a versão mínima
