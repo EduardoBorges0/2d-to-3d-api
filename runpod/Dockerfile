@@ -158,6 +158,10 @@ RUN python -c "import diff_gaussian_rasterization; print('[verify] diff_gaussian
 # CUMM_CUDA_ARCH_LIST usa o mesmo formato/lista que TORCH_CUDA_ARCH_LIST
 # acima, para cobrir as mesmas GPUs.
 ENV CUMM_CUDA_ARCH_LIST="8.0;8.6;8.9"
+# Dependências de build do cumm (setup.py deles importa isto diretamente,
+# --no-build-isolation não instala nada disto sozinho — confirmado no build
+# real: "ModuleNotFoundError: No module named 'pccm'").
+RUN pip install --no-cache-dir pccm pybind11 fire numpy sympy ccimport
 RUN git clone https://github.com/FindDefinition/cumm.git /tmp/extensions/cumm \
     && pip install --no-cache-dir --no-build-isolation /tmp/extensions/cumm
 RUN git clone https://github.com/traveller59/spconv.git /tmp/extensions/spconv \
