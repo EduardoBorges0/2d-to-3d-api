@@ -20,6 +20,8 @@ pelo estado, nenhum pedido HTTP individual fica à espera tempo nenhum.
 
 import base64
 import io
+import os
+import subprocess
 import threading
 import uuid
 
@@ -27,6 +29,22 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from PIL import Image
+
+# Diagnóstico: já tivemos "CUDA unknown error" (torch.cuda / warp) em 4 pods
+# diferentes seguidos (2 versões de imagem CUDA diferentes, hosts diferentes).
+# Antes de sequer tentar carregar o TRELLIS, confirma se o GPU está visível ao
+# container ao nível do SO — se nvidia-smi já falhar aqui, o problema é o
+# RunPod não estar a expor o GPU a este container (fora do nosso controlo no
+# Dockerfile/código), não a nossa imagem.
+print("[diag] NVIDIA_VISIBLE_DEVICES=", os.environ.get("NVIDIA_VISIBLE_DEVICES"))
+print("[diag] CUDA_VISIBLE_DEVICES=", os.environ.get("CUDA_VISIBLE_DEVICES"))
+try:
+    out = subprocess.run(["nvidia-smi"], capture_output=True, text=True, timeout=30)
+    print("[diag] nvidia-smi exit code:", out.returncode)
+    print("[diag] nvidia-smi stdout:\n", out.stdout)
+    print("[diag] nvidia-smi stderr:\n", out.stderr)
+except Exception as e:
+    print(f"[diag] nvidia-smi falhou ao correr: {type(e).__name__}: {e}")
 
 from trellis.pipelines import TrellisImageTo3DPipeline
 from trellis.utils import postprocessing_utils
