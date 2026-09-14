@@ -11,7 +11,7 @@ visualizador e edição por texto, seguindo o design system Almovi.
 ├── pipeline/
 │   ├── manual_pipeline.py   # extração de imagens+legendas de manuais técnicos (PDF)
 │   ├── trellis_pipeline.py  # fotos -> RunPod (TRELLIS) -> GLB, atualiza catalog/data/parts.json
-│   ├── runpod_pod_client.py # liga/desliga um pod RunPod (Community Cloud) por sessão de lote
+│   ├── runpod_pod_client.py # liga/desliga um pod RunPod (Secure Cloud) por sessão de lote
 │   ├── edit_pipeline.py     # edição por texto (furo/saliência paramétricos) sobre um GLB existente
 │   ├── server.py            # backend FastAPI: catálogo + "Adicionar peça" + "Processar pendentes" + "Editar por texto"
 │   └── requirements.txt
@@ -56,9 +56,14 @@ Copiar `.env.example` para `.env` e preencher `RUNPOD_API_KEY`, `RUNPOD_IMAGE`
 ```
 
 Depois abrir `http://localhost:8791`. Contém 3 peças placeholder (`suporte`, `válvula`,
-`vedante`) para validar grid, pesquisa, filtros, badges e modal 3D, mais dois botões:
-**Adicionar peça** (upload de fotos → fica em fila, `estado: "a_processar"`) e
-**Processar pendentes** (liga 1 pod RunPod, gera todas as peças em fila, desliga o pod).
+`vedante`) para validar grid, pesquisa, filtros, badges e modal 3D, mais botões:
+**Adicionar peça** (upload de fotos → fica em fila, `estado: "a_processar"`),
+**Processar pendentes** (liga 1 pod RunPod, gera todas as peças em fila, desliga o pod) e
+**Gerar peça (TRELLIS)**, na barra lateral — teste rápido: upload de foto(s) → gera no
+RunPod → mostra o modelo 3D ali mesmo no visualizador, **sem gravar nada** (não cria
+entrada no catálogo nem `.glb` em disco — o resultado vive só na memória do servidor e do
+browser enquanto o modal estiver aberto). Útil para testar imagens/qualidade sem sujar o
+catálogo real (ver `POST /api/test-generate` em `pipeline/server.py`).
 
 Não abrir `catalog/index.html` diretamente no browser (`file://`) — o `fetch` do
 `parts.json` e o upload de fotos precisam do servidor.
@@ -78,14 +83,19 @@ Depende de `PyMuPDF` (fitz), `pytesseract` (+ Tesseract instalado no sistema) e 
 ## 3. Pipeline TRELLIS (fotos → GLB, via RunPod — por sessão de lote)
 
 `pipeline/trellis_pipeline.py` orquestra a geração: liga um pod RunPod PERSISTENTE
-(Community Cloud, `pipeline/runpod_pod_client.py`), que corre o
+(Secure Cloud, `pipeline/runpod_pod_client.py`), que corre o
 [TRELLIS (Microsoft)](https://github.com/microsoft/TRELLIS) numa GPU alugada, gera
 1+ peças na mesma sessão, e **pára** o pod no fim (não termina). Este `.venv` local
 **não precisa de GPU nem de instalar o TRELLIS**.
 
-Optou-se por **Pod + Community Cloud** em vez de RunPod Serverless porque, para o
-volume esperado (poucas peças/dia), sai ~4x mais barato por hora de GPU. E optou-se
-por um pod **persistente** (criado uma vez, depois só Start/Stop) em vez de
+Optou-se por **Pod** em vez de RunPod Serverless porque, para o volume esperado
+(poucas peças/dia), sai mais barato por hora de GPU. Dentro de Pod, testámos primeiro
+Community Cloud pela economia adicional (~4x mais barato por hora), mas essa opção deu
+sempre "CUDA unknown error" em vários hosts/GPUs diferentes (qualidade de host
+inconsistente, não é bug nosso) — confirmado testando o mesmo setup em **Secure Cloud**
+(datacenters próprios do RunPod), onde funcionou de forma fiável. Ficou Secure Cloud por
+omissão; ver `RUNPOD_CLOUD_TYPE` em `.env.example` para voltar a tentar Community Cloud.
+E optou-se por um pod **persistente** (criado uma vez, depois só Start/Stop) em vez de
 criar/destruir a cada sessão porque o disco do container (com a imagem de ~12GB) não é
 cobrado enquanto o pod está parado — só a GPU pára de custar — e assim evita-se repetir
 o "cold start" de puxar a imagem inteira a cada sessão. Ver `runpod/README.md` para os

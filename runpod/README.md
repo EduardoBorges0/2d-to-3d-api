@@ -1,4 +1,4 @@
-# Setup do RunPod (pod persistente, Community Cloud)
+# Setup do RunPod (pod persistente, Secure Cloud)
 
 Ao contrário de um endpoint RunPod Serverless, aqui **não crias nada antecipadamente
 na consola** além de publicar a imagem Docker — o próprio código cria o pod na
@@ -55,7 +55,7 @@ Com o `.env` preenchido e o `.venv` do projeto com as dependências instaladas
 .venv\Scripts\python.exe pipeline\trellis_pipeline.py --input photos_input\<peça> --part-id teste-runpod
 ```
 
-Na 1ª vez: cria o pod (Community Cloud, GPU mínima 16GB — ver
+Na 1ª vez: cria o pod (Secure Cloud, GPU mínima 16GB — ver
 `RUNPOD_GPU_TYPE_IDS` em `.env.example` para a ordem de preferência), espera
 o TRELLIS carregar (`/health`), gera a peça, e **pára o pod** (não o termina —
 fica na consola RunPod com estado "Stopped", pronto a retomar mais rápido da
@@ -67,23 +67,27 @@ fila), usa o site: "Adicionar peça" várias vezes (fica tudo em
 
 ## Notas
 
-- **Disponibilidade variável (Community Cloud e às vezes até Secure Cloud)**:
-  usa capacidade partilhada — pode genuinamente não haver máquina livre com a
-  GPU pedida num dado momento (confirmámos isto na prática: a própria consola
-  web do RunPod recusou o mesmo pedido). `RUNPOD_GPU_TYPE_IDS` aceita uma
-  lista (o RunPod tenta pela ordem); se mesmo assim falhar,
-  `pipeline/runpod_pod_client.py` lança `PodError` com a mensagem da API, sem
-  inventar sucesso — a solução é simplesmente tentar mais tarde. Ver também
+- **Porque Secure Cloud por omissão**: testámos primeiro Community Cloud
+  (mais barato) e deu sempre "CUDA unknown error" ao inicializar o driver
+  dentro do container — confirmado em vários hosts/GPUs diferentes (A40, RTX
+  4090), não era bug nosso. O mesmo setup em Secure Cloud (datacenters
+  próprios do RunPod) funcionou de forma fiável. Se quiseres tentar poupar
+  (Community Cloud é ~4x mais barato por hora), define
+  `RUNPOD_CLOUD_TYPE=COMMUNITY` no `.env` — mas é possível voltar a apanhar
+  hosts inconsistentes.
+- **Disponibilidade variável**: mesmo em Secure Cloud, cada pod fica preso a
+  uma máquina física específica — se essa GPU estiver ocupada quando tentas
+  retomar (Start) um pod parado, a API devolve "not enough free GPUs on the
+  host machine" e não há como forçar; `pipeline/runpod_pod_client.py` trata
+  isto automaticamente criando um pod novo nesse caso (não inventa sucesso,
+  só não fica preso a um host indisponível). Ver também
   [status.runpod.io](https://status.runpod.io) / [statusgator.com/services/runpod](https://statusgator.com/services/runpod)
   para incidentes ativos na plataforma.
-- **Custo do pod parado**: o container disk (onde está a imagem) é grátis
-  parado; só o volume (`volumeInGb`, ~20GB por omissão) continua a ser
-  cobrado, ~$0.20/GB/mês (≈ $4/mês neste caso), mesmo sem gerar nada. Para
-  deixar de pagar isto por completo, termina o pod à mão na consola RunPod
-  (ou chama `runpod_pod_client.terminate_pod(pod_id)`) — a próxima sessão
-  cria um novo automaticamente (voltando ao arranque lento uma vez).
+- **Custo do pod parado: $0/h.** O container disk (onde está a imagem) é
+  grátis parado, e não pedimos nenhum volume persistente (`volumeInGb=0` no
+  `create_pod()`) — chegámos a ter um volume de 20GB por omissão do RunPod
+  que, além de custar, tapava o conteúdo da imagem em `/workspace` (bug real,
+  já corrigido).
 - **IP pode mudar**: o cliente usa sempre o URL proxy
   (`https://{pod_id}-8000.proxy.runpod.net`), não o IP público, por isso isto
   não afeta o funcionamento.
-- Se preferires mais previsibilidade de stock (ao custo de preço mais alto),
-  define `RUNPOD_CLOUD_TYPE=SECURE` no `.env`.

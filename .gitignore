@@ -3,3 +3,13 @@ __pycache__/
 *.pyc
 .env
 .idea/
+
+# Fica só no repositório local — o GitHub passa a conter só o backend/
+# container RunPod (runpod/, pipeline/runpod_pod_client.py,
+# pipeline/trellis_pipeline.py). Estes ficheiros continuam a existir e a
+# funcionar normalmente na tua máquina, só deixam de ser rastreados pelo git.
+catalog/
+pipeline/server.py
+pipeline/edit_pipeline.py
+pipeline/manual_pipeline.py
+photos_input/

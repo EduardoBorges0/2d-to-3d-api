@@ -8,9 +8,10 @@ retomá-lo evita repetir o "cold start" de puxar a imagem inteira a cada
 sessão (o que acontecia sempre que criávamos/destruíamos um pod novo, porque
 cada sessão calhava numa máquina física diferente sem a imagem em cache).
 
-Custo do disco parado: ~$0.20/GB/mês de volume (não confundir com o
-container disk, esse é grátis parado) — no nosso caso ~20GB ≈ $4/mês, mesmo
-sem gerar nada.
+Custo com o pod parado: $0/h — o container disk (onde está a imagem) é
+grátis parado, e não pedimos volume nenhum (volumeInGb=0 no create_pod()
+abaixo; um volume por omissão do RunPod chegou a tapar o conteúdo da imagem
+em /workspace, ver commit que introduziu volumeInGb=0).
 
 Endpoints usados (RunPod REST API, https://docs.runpod.io/api-reference):
     POST   /v1/pods                 -> criar o pod (1ª vez apenas)
@@ -34,7 +35,12 @@ Configuração via ambiente (ver .env.example):
                                .env), preenchido nas vezes seguintes
     RUNPOD_GPU_TYPE_IDS      — lista separada por vírgulas, por ordem de preferência
                                (default: GPU_TYPE_IDS_DEFAULT abaixo)
-    RUNPOD_CLOUD_TYPE        — "COMMUNITY" (default, mais barato) ou "SECURE"
+    RUNPOD_CLOUD_TYPE        — "SECURE" (default) ou "COMMUNITY" (mais barato,
+                               mas qualidade de host inconsistente — deu
+                               sempre "CUDA unknown error" em vários hosts/
+                               GPUs diferentes; confirmado testando o mesmo
+                               setup em Secure Cloud, onde funcionou de forma
+                               fiável)
     RUNPOD_CONTAINER_DISK_GB — default 40
 """
 
@@ -119,7 +125,11 @@ def create_pod() -> str:
     payload = {
         "name": "2d-to-3d-trellis-batch",
         "imageName": image,
-        "cloudType": os.environ.get("RUNPOD_CLOUD_TYPE", "COMMUNITY"),
+        # SECURE por omissão: Community Cloud deu sempre "CUDA unknown error"
+        # em vários hosts/GPUs diferentes (qualidade de host inconsistente),
+        # confirmado testando o mesmo setup em Secure Cloud, onde funcionou
+        # de forma fiável. Mais caro por hora, mas sem as falhas recorrentes.
+        "cloudType": os.environ.get("RUNPOD_CLOUD_TYPE", "SECURE"),
         "computeType": "GPU",
         "gpuTypeIds": _gpu_type_ids(),
         "gpuCount": 1,
