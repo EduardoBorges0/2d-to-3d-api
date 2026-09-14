@@ -233,21 +233,24 @@ def generate(proxy_url: str, images_b64: list[str], quality: str, seed: int) -> 
         # passageiro no meio do polling abortava a geração inteira mesmo com
         # o pod a continuar a trabalhar perfeitamente bem em segundo plano
         # (o job real corre numa thread à parte no pod_server, alheio a
-        # falhas de rede neste pedido de estado). Um 4xx (ex: 404 "job
-        # desconhecido") continua a ser fatal — esse sim indica um problema
-        # real (job perdido, ex: o pod reiniciou).
+        # falhas de rede neste pedido de estado). Um 404 (job desconhecido)
+        # é fatal de imediato — indica job perdido a sério (ex: o pod
+        # reiniciou e perdeu o estado em memória) e insistir nunca resolve.
         try:
             r = requests.get(f"{proxy_url}/generate/{job_id}", timeout=30)
-            if r.status_code < 500:
-                r.raise_for_status()
-                job = r.json()
-                if job["status"] == "done":
-                    import base64
-                    return base64.b64decode(job["glb_b64"])
-                if job["status"] == "error":
-                    raise PodError(f"Worker RunPod devolveu erro: {job['error']}")
         except requests.RequestException:
-            pass
+            r = None
+
+        if r is not None and r.status_code == 404:
+            raise PodError(f"Job {job_id} desconhecido no pod (reiniciou e perdeu o estado?)")
+        if r is not None and r.status_code < 500:
+            r.raise_for_status()
+            job = r.json()
+            if job["status"] == "done":
+                import base64
+                return base64.b64decode(job["glb_b64"])
+            if job["status"] == "error":
+                raise PodError(f"Worker RunPod devolveu erro: {job['error']}")
 
         if time.monotonic() > deadline:
             raise PodError(f"Geração (job {job_id}) não terminou em {GENERATE_TIMEOUT_S}s")
