@@ -124,6 +124,16 @@ def create_pod() -> str:
         "gpuTypeIds": _gpu_type_ids(),
         "gpuCount": 1,
         "containerDiskInGb": int(os.environ.get("RUNPOD_CONTAINER_DISK_GB", 35)),
+        # Sem isto, o RunPod anexa por omissão um volume persistente de 20GB
+        # montado em /workspace — exatamente onde a imagem tem o TRELLIS e o
+        # pod_server.py copiados (runpod/Dockerfile) — e esse volume TAPA o
+        # conteúdo da imagem nesse caminho (fica vazio na 1ª vez). Confirmado
+        # num pod real: "Could not import module pod_server" mesmo a imagem
+        # estando correta — o volumeInGb/volumeMountPath do pod (via GET
+        # /pods/{id}) mostrava 20GB em /workspace sem nunca o termos pedido.
+        # Não precisamos de nenhum volume persistente (nada a guardar entre
+        # sessões dentro do pod) — 0 desativa-o.
+        "volumeInGb": 0,
         "ports": [f"{POD_PORT}/http"],
     }
     resp = requests.post(f"{REST_API_BASE}/pods", headers=_headers(api_key), json=payload, timeout=30)
