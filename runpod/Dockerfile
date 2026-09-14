@@ -144,8 +144,25 @@ RUN git clone https://github.com/autonomousvision/mip-splatting.git /tmp/extensi
     && pip install --no-cache-dir --no-build-isolation /tmp/extensions/mip-splatting/submodules/diff-gaussian-rasterization/
 RUN python -c "import diff_gaussian_rasterization; print('[verify] diff_gaussian_rasterization OK')"
 
-# 9) "--spconv" — wheel pré-compilada
-RUN pip install --no-cache-dir spconv-cu120
+# 9) "--spconv" — compilado a PARTIR DO CÓDIGO (não a wheel pré-compilada
+# spconv-cu120 do PyPI, que é de abril de 2023, contra um toolchain CUDA já
+# antigo). Confirmado em pods reais (2 GPUs diferentes — A40 e RTX 4090 — e 2
+# versões de imagem CUDA base — 12.1 e 12.4) um crash nativo (processo morre,
+# sem traceback Python) 100% reprodutível logo no início da fase de slat
+# sampling do TRELLIS — exatamente o primeiro ponto onde o spconv é mesmo
+# invocado. A própria documentação do spconv (COMMON_PROBLEMS.md, "PTX
+# compilado com toolchain não suportado") descreve este sintoma e recomenda
+# compilar contra uma versão de CUDA mais próxima da do sistema — não existe
+# wheel PyPI mais recente que cu120, por isso compilamos nós.
+# cumm é uma dependência obrigatória do spconv (documentado no README deles).
+# CUMM_CUDA_ARCH_LIST usa o mesmo formato/lista que TORCH_CUDA_ARCH_LIST
+# acima, para cobrir as mesmas GPUs.
+ENV CUMM_CUDA_ARCH_LIST="8.0;8.6;8.9"
+RUN git clone https://github.com/FindDefinition/cumm.git /tmp/extensions/cumm \
+    && pip install --no-cache-dir --no-build-isolation /tmp/extensions/cumm
+RUN git clone https://github.com/traveller59/spconv.git /tmp/extensions/spconv \
+    && pip install --no-cache-dir --no-build-isolation /tmp/extensions/spconv
+RUN python -c "import spconv.pytorch; print('[verify] spconv OK')"
 
 # 10) Código do TRELLIS em si (não corremos o setup.sh dele — os passos acima
 # já cobrem tudo o que ele instalaria para "--basic --xformers --flash-attn
