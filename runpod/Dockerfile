@@ -157,15 +157,31 @@ RUN python -c "import diff_gaussian_rasterization; print('[verify] diff_gaussian
 # cumm é uma dependência obrigatória do spconv (documentado no README deles).
 # CUMM_CUDA_ARCH_LIST usa o mesmo formato/lista que TORCH_CUDA_ARCH_LIST
 # acima, para cobrir as mesmas GPUs.
-ENV CUMM_CUDA_ARCH_LIST="8.0;8.6;8.9"
-# Dependências de build do cumm (setup.py deles importa isto diretamente,
-# --no-build-isolation não instala nada disto sozinho — confirmado no build
-# real: "ModuleNotFoundError: No module named 'pccm'").
+ENV CUMM_CUDA_ARCH_LIST="8.0;8.6;8.9" \
+    CUMM_DISABLE_JIT="1"
+    # CUMM_DISABLE_JIT=1: sem isto, "pip install ." (não-editável) não compila
+    # NADA de código C++/CUDA (nem no build nem por JIT depois — o JIT é só
+    # para "pip install -e ." em modo de desenvolvimento) — confirmado no
+    # build real: instalava sem erro mas "import spconv.pytorch" rebentava
+    # com "ModuleNotFoundError: No module named 'spconv.core_cc'" (a
+    # extensão nativa nunca tinha sido compilada).
+    #
+    # Usa-se a tag v0.7.11 do cumm (não a branch main — o próprio README do
+    # cumm avisa "code in main branch may contain bugs"), a versão mínima
+    # que o setup.py do spconv 2.3.8 aceita (cumm<0.8.0,>=0.7.11).
+#
+# Dependências de build do cumm/spconv (os setup.py deles importam isto
+# diretamente — --no-build-isolation não instala nada disto sozinho,
+# confirmado no build real: "ModuleNotFoundError: No module named 'pccm'").
 RUN pip install --no-cache-dir pccm pybind11 fire numpy sympy ccimport
-RUN git clone https://github.com/FindDefinition/cumm.git /tmp/extensions/cumm \
+RUN git clone --branch v0.7.11 --depth 1 https://github.com/FindDefinition/cumm.git /tmp/extensions/cumm \
     && pip install --no-cache-dir --no-build-isolation /tmp/extensions/cumm
-RUN git clone https://github.com/traveller59/spconv.git /tmp/extensions/spconv \
-    && pip install --no-cache-dir --no-build-isolation /tmp/extensions/spconv
+RUN git clone --branch v2.3.8 --depth 1 https://github.com/traveller59/spconv.git /tmp/extensions/spconv \
+    && pip install --no-cache-dir --no-build-isolation --no-deps /tmp/extensions/spconv
+    # --no-deps: sem isto o pip resolve "cumm<0.8.0,>=0.7.11" fazendo
+    # download de outra wheel pré-compilada do PyPI e desinstala o cumm que
+    # acabámos de compilar (confirmado no build real) — anulando o objetivo
+    # de compilar contra o nosso próprio toolchain.
 RUN python -c "import spconv.pytorch; print('[verify] spconv OK')"
 
 # 10) Código do TRELLIS em si (não corremos o setup.sh dele — os passos acima
